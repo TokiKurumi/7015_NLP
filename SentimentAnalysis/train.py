@@ -91,9 +91,7 @@ class SentimentTrainer:
             'f1': f1
         }
 
-    def train(self, epochs, early_stopping_patience=5):
-        best_val_loss = float('inf')
-        patience_counter = 0
+    def train(self, epochs):
 
         print("开始训练...")
         for epoch in range(epochs):
@@ -118,18 +116,6 @@ class SentimentTrainer:
             print(f'\tVal Loss: {val_metrics["loss"]:.3f} | Val Acc: {val_metrics["accuracy"] * 100:.2f}%')
             print(
                 f'\tVal Precision: {val_metrics["precision"]:.3f} | Val Recall: {val_metrics["recall"]:.3f} | Val F1: {val_metrics["f1"]:.3f}')
-
-            # 早停
-            if val_metrics['loss'] < best_val_loss:
-                best_val_loss = val_metrics['loss']
-                patience_counter = 0
-                # 保存最佳模型
-                torch.save(self.model.state_dict(), 'best_model.pt')
-            else:
-                patience_counter += 1
-                if patience_counter >= early_stopping_patience:
-                    print(f"早停在第 {epoch + 1} 轮")
-                    break
 
     def plot_training_history(self):
         """绘制训练历史"""

@@ -192,8 +192,6 @@ def main():
         lambda x: text_to_sequence(x, vocab, max_sequence_length)
     )
 
-    # 划分训练集和验证集
-    from sklearn.model_selection import train_test_split
 
     # 直接使用DataFrame进行划分，而不是转换为列表
     train_processed, val_processed = train_test_split(
@@ -232,7 +230,7 @@ def main():
             print(f"长度示例: {lengths[:5]}")
             break
 
-    return train_loader, val_loader, test_loader
+    return train_loader, val_loader, test_loader , len(vocab)
 
 
 def save_vocabulary(vocab, filepath):
