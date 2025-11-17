@@ -5,8 +5,35 @@ import torch
 import numpy as np
 import os
 import json
+import re
 from torch.utils.data import DataLoader
 from SentimentAnalysis.IMDBDataset import IMDBDataset
+
+def clean_text(text):
+    """
+    text pre processing function
+    :param text:
+    text(str)
+    :return:
+    str
+    """
+    if not isinstance(text, str):
+        return ""
+
+    #1. remove HTML labels
+    text = re.sub(r'<[^>]+>', '', text)
+    #2. translate to lower
+    text = text.lower()
+    #3. remove URL
+    text = re.sub(r'https?://\S+|www\.\S+', '', text)
+    #4. remove e-mail
+    text = re.sub(r'\S+@\S+', '', text)
+    #5. keep letter, number, and remove special words
+    text = re.sub(r'[^a-zA-Z]', ' ', text)
+    #6. remove the space not need
+    text = re.sub(r'\s+', ' ', text).strip()
+
+    return text
 
 
 # 1. 构建词汇表 (Vocabulary Building)
@@ -25,6 +52,8 @@ def build_vocab(texts, min_freq=2):
         if count >= min_freq: # 只保留出现次数≥min_freq的词
             vocab[word] = idx
             idx += 1
+
+    print(f"Vocabulary has been built: {len(vocab)} words, remove {len(word_counts) - len(vocab) + 2} words ")
     return vocab
 
 
@@ -51,24 +80,93 @@ def to_tensor(data):
 def load_glove_embeddings(glove_path, vocab, embedding_dim=100):
     """加载GloVe词向量并创建嵌入矩阵"""
     embeddings_index = {}
-    with open(glove_path, 'r', encoding='utf-8') as f:
-        for line in f:
-            values = line.split()
-            word = values[0]
-            coefs = np.asarray(values[1:], dtype='float32')
-            embeddings_index[word] = coefs
+    print(f"Loading GloVe embeddings from {glove_path}")
+    try:
+        with open(glove_path, 'r', encoding='utf-8') as f:
+            for line in f:
+                values = line.split()
+                if len(values) < embedding_dim + 1:  # 确保格式正确
+                    continue
+                word = values[0]
+                coefs = np.asarray(values[1:], dtype='float32')
+                embeddings_index[word] = coefs
+    except FileNotFoundError:
+        print(f"错误: GloVe文件不存在: {glove_path}")
+        return None
+    except Exception as e:
+        print(f"加载GloVe文件时出错: {e}")
+        return None
 
+    print(f"Successfully loaded GloVe embeddings {len(embeddings_index)}")
     # 创建嵌入矩阵
     embedding_matrix = np.zeros((len(vocab), embedding_dim))
+    found_words = 0
+    missing_words = []
+
     for word, idx in vocab.items():
         embedding_vector = embeddings_index.get(word)
         if embedding_vector is not None:
+            # Find pre-train vectors
             embedding_matrix[idx] = embedding_vector
+            found_words += 1
+        elif word.lower() in embeddings_index:
+            # try lower letter
+            embedding_matrix[idx] = embeddings_index[word.lower()]
+            found_words += 1
         else:
             # 对于不在GloVe中的词，随机初始化
             embedding_matrix[idx] = np.random.normal(scale=0.6, size=(embedding_dim,))
+            if word not in ['<PAD>', '<UNK>']:
+                missing_words.append(word)
+    # Analysis report
+    coverage = found_words / len(vocab) * 100
+    print(f"词汇表覆盖率: {found_words}/{len(vocab)} ({coverage:.2f}%)")
+
+    if missing_words and len(missing_words) > 10:
+        print(f"前10个缺失词示例: {missing_words[:10]}")
 
     return torch.tensor(embedding_matrix, dtype=torch.float)
+
+
+def process_dataframe(df, text_column='review', label_column='sentiment', clean_text_func=None):
+    """
+    处理DataFrame，进行文本清理和标签转换
+    参数:
+        df (pd.DataFrame): 输入数据框
+        text_column (str): 文本列名
+        label_column (str): 标签列名
+        clean_text_func (function): 文本清理函数
+    返回:
+        pd.DataFrame: 处理后的数据框
+    """
+    df_processed = df.copy()
+
+    # 文本清理
+    if clean_text_func and text_column in df_processed.columns:
+        print("正在进行文本清理...")
+        df_processed['clean_text'] = df_processed[text_column].apply(clean_text_func)
+        print(f"文本清理完成，示例: {df_processed['clean_text'].iloc[0][:100]}...")
+
+    # 标签转换（如果标签是字符串）
+    if label_column in df_processed.columns:
+        if df_processed[label_column].dtype == 'object':
+            # 假设标签是 'positive'/'negative' 或类似格式
+            label_mapping = {'positive': 1, 'negative': 0, 'pos': 1, 'neg': 0}
+            df_processed['label'] = df_processed[label_column].map(label_mapping)
+            # 处理未映射的标签
+            df_processed['label'] = df_processed['label'].fillna(-1).astype(int)
+        else:
+            df_processed['label'] = df_processed[label_column]
+
+    # 移除无效数据
+    original_len = len(df_processed)
+    df_processed = df_processed[df_processed['label'].isin([0, 1])]
+    if 'clean_text' in df_processed.columns:
+        df_processed = df_processed[df_processed['clean_text'].str.len() > 0]
+
+    print(f"数据清洗完成: 移除 {original_len - len(df_processed)} 个无效样本")
+
+    return df_processed
 
 
 def create_data_loaders(train_df, val_df, test_df, batch_size=32, shuffle=True):
@@ -167,24 +265,84 @@ def collate_fn(batch):
         'lengths': lengths_tensor
     }
 
+def save_vocabulary(vocab, filepath):
+    """
+    保存词汇表到JSON文件
+    """
+    os.makedirs(os.path.dirname(filepath), exist_ok=True)
+    with open(filepath, 'w', encoding='utf-8') as f:
+        json.dump(vocab, f, ensure_ascii=False, indent=2)
+    print(f"词汇表已保存到: {filepath}")
+
+def load_vocabulary(filepath):
+    """
+    从JSON文件加载词汇表
+    """
+    with open(filepath, 'r', encoding='utf-8') as f:
+        vocab = json.load(f)
+    print(f"词汇表已加载，大小: {len(vocab)}")
+    return vocab
+
+
+def analyze_dataset(df, name="数据集"):
+    """
+    分析数据集统计信息
+    """
+    print(f"\n=== {name} 分析 ===")
+    print(f"总样本数: {len(df)}")
+    print(f"正样本数: {sum(df['label'] == 1)}")
+    print(f"负样本数: {sum(df['label'] == 0)}")
+
+    if 'clean_text' in df.columns:
+        text_lengths = df['clean_text'].str.split().str.len()
+        print(f"平均文本长度: {text_lengths.mean():.2f}")
+        print(f"最大文本长度: {text_lengths.max()}")
+        print(f"最小文本长度: {text_lengths.min()}")
 
 def main():
-    filepath = os.path.join('data', 'vocab.txt')
+    train_file = 'imdb_train_processed.csv'
+    test_file = 'imdb_test_processed.csv'
+    vocab_file = os.path.join('data', 'vocab.txt')
 
-    # 读取处理后的数据
-    train_df = pd.read_csv('imdb_train_processed.csv')
-    test_df = pd.read_csv('imdb_test_processed.csv')
+    # 检查数据文件是否存在
+    if not os.path.exists(train_file) or not os.path.exists(test_file):
+        print(f"错误: 数据文件不存在")
+        print(f"请确保以下文件存在:")
+        print(f"- {train_file}")
+        print(f"- {test_file}")
+        return None, None, None, 0
 
-    if not os.path.exists(filepath):
+    print("正在加载数据...")
+
+    # 读取原始数据
+    try:
+        train_df = pd.read_csv(train_file)
+        test_df = pd.read_csv(test_file)
+        print(f"训练集大小: {len(train_df)}, 测试集大小: {len(test_df)}")
+    except Exception as e:
+        print(f"数据加载失败: {e}")
+        return None, None, None, 0
+
+    # 处理数据（文本清理和标签转换）
+    train_df = process_dataframe(train_df, clean_text_func=clean_text)
+    test_df = process_dataframe(test_df, clean_text_func=clean_text)
+
+    # 分析数据集
+    analyze_dataset(train_df, "训练集")
+    analyze_dataset(test_df, "测试集")
+
+
+    if not os.path.exists(vocab_file):
         vocab = build_vocab(train_df['clean_text'])
         print(f"词汇表大小: {len(vocab)}")
-        save_vocabulary(vocab, filepath)
-        print(f"保存完成: {filepath}")
+        save_vocabulary(vocab, vocab_file)
+        print(f"保存完成: {vocab_file}")
     else:
-        vocab = load_vocabulary(filepath)
+        vocab = load_vocabulary(vocab_file)
 
     # 转换为序列
     max_sequence_length = 256  # 根据你的数据调整
+    print(f"\n正在将文本转换为序列 (最大长度: {max_sequence_length})...")
     train_df['sequence'] = train_df['clean_text'].apply(
         lambda x: text_to_sequence(x, vocab, max_sequence_length)
     )
@@ -205,13 +363,14 @@ def main():
     train_processed = train_processed.reset_index(drop=True)
     val_processed = val_processed.reset_index(drop=True)
     test_processed = test_df.reset_index(drop=True)
-
+    print(f"\n数据划分完成:")
     print(f"训练集: {len(train_processed)}, 验证集: {len(val_processed)}, 测试集: {len(test_processed)}")
 
     # 创建DataLoader
     train_loader, val_loader, test_loader = create_data_loaders(
         train_processed, val_processed, test_processed,
         batch_size=32,
+        shuffle=True
     )
 
     # 测试DataLoader
@@ -230,29 +389,16 @@ def main():
             print(f"长度示例: {lengths[:5]}")
             break
 
-    return train_loader, val_loader, test_loader , len(vocab)
+    return train_loader, val_loader, test_loader, len(vocab), vocab
 
 
-def save_vocabulary(vocab, filepath):
-    """
-    保存词汇表到JSON文件
-    """
-    os.makedirs(os.path.dirname(filepath), exist_ok=True)
-    with open(filepath, 'w', encoding='utf-8') as f:
-        json.dump(vocab, f, ensure_ascii=False, indent=2)
-    print(f"词汇表已保存到: {filepath}")
-
-def load_vocabulary(filepath):
-    """
-    从JSON文件加载词汇表
-    """
-    with open(filepath, 'r', encoding='utf-8') as f:
-        vocab = json.load(f)
-    print(f"词汇表已加载，大小: {len(vocab)}")
-    return vocab
 
 if __name__ == "__main__":
-    main()
+    train_loader, val_loader, test_loader, vocab_size = main()
+    if train_loader is not None:
+        print(f"\n数据加载成功! 词汇表大小: {vocab_size}")
+    else:
+        print("数据加载失败!")
 
 # 使用示例（如果你有GloVe文件）
 # glove_path = 'glove.6B.100d.txt'
