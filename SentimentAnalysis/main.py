@@ -171,8 +171,9 @@ def main():
     print("2. 预训练GloVe嵌入（不冻结）")
     print("3. 预训练GloVe嵌入（冻结）")
     print("4. 比较所有嵌入方式")
+    print("5. 运行我的数据分析")
 
-    choice = input("请输入选择 (1-4): ").strip()
+    choice = input("请输入选择 (1-5): ").strip()
 
     if choice == "1":
         result = train_model("random")
@@ -191,6 +192,18 @@ def main():
         # 保存比较结果
         if any(results.values()):
             print(f"\n所有模型训练完成! 最佳模型保存在各自的saved_models子目录中")
+        # 新增功能5
+    elif choice == "5":
+        print("运行我的数据分析...")
+        try:
+            from my_data_analysis import run_my_analysis
+            stats = run_my_analysis()
+            print("\n数据分析统计结果:")
+            for key, value in stats.items():
+                print(f"  {key}: {value}")
+        except Exception as e:
+            print(f"数据分析运行失败: {e}")
+            print("请确保my_data_analysis.py文件存在")
     else:
         print("无效选择")
 
