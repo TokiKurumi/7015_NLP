@@ -9,12 +9,13 @@ import os
 
 
 class SentimentTrainer:
-    def __init__(self, model, train_loader, val_loader, device, save_dir='saved_models'):
+    def __init__(self, model, train_loader, val_loader, device, save_dir='saved_models', epochs=10):
         self.model = model
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.device = device
         self.save_dir = save_dir
+        self.epochs = epochs
 
         os.makedirs(save_dir, exist_ok=True)
 
@@ -27,6 +28,7 @@ class SentimentTrainer:
         self.val_losses = []
         self.train_accuracies = []
         self.val_accuracies = []
+        self.epoch_times = []
 
         #Conserve the best model
         self.best_val_accuracy = 0.0
@@ -69,7 +71,7 @@ class SentimentTrainer:
                 progress = (i + 1) / total_batches * 100
                 # 使用白色ANSI代码
                 print(
-                    f'\r\033[97mEpoch {epoch + 1}/{total_epochs}: {progress:6.2f}% | Loss: {loss.item():.4f} | Acc: {acc.item() * 100:6.2f}%\033[0m',
+                    f'\r\033[97mEpoch {epoch + 1}/{total_epochs}: Progress: {progress:6.2f}% | Loss: {loss.item():.4f} | Acc: {acc.item() * 100:6.2f}%\033[0m',
                     end='', flush=True)
 
         # 清除进度行
@@ -85,34 +87,34 @@ class SentimentTrainer:
         all_labels = []
 
         total_batches = len(loader)
+        with torch.no_grad():
+            # 使用简单的百分比显示而不是进度条
+            for i, batch in enumerate(loader):
+                sequences = batch['sequences'].to(self.device)
+                labels = batch['labels'].to(self.device)
+                lengths = batch['lengths'].to(self.device)
 
-        # 使用简单的百分比显示而不是进度条
-        for i, batch in enumerate(loader):
-            sequences = batch['sequences'].to(self.device)
-            labels = batch['labels'].to(self.device)
-            lengths = batch['lengths'].to(self.device)
+                predictions = self.model(sequences, lengths)
+                if predictions.dim() > 1 and predictions.size(1) == 1:
+                    predictions = predictions.squeeze(1)
+                loss = self.criterion(predictions, labels)
 
-            predictions = self.model(sequences, lengths)
-            if predictions.dim() > 1 and predictions.size(1) == 1:
-                predictions = predictions.squeeze(1)
-            loss = self.criterion(predictions, labels)
+                predicted_probs = torch.sigmoid(predictions)
+                predicted_labels = predicted_probs > 0.5
+                acc = (predicted_labels == labels).float().mean()
 
-            predicted_probs = torch.sigmoid(predictions)
-            predicted_labels = predicted_probs > 0.5
-            acc = (predicted_labels == labels).float().mean()
+                epoch_loss += loss.item()
+                epoch_acc += acc.item()
 
-            epoch_loss += loss.item()
-            epoch_acc += acc.item()
+                all_predictions.extend(predicted_labels.cpu().numpy())
+                all_labels.extend(labels.cpu().numpy())
 
-            all_predictions.extend(predicted_labels.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-
-            # 每10个批次或最后一个批次显示进度
-            if (i + 1) % 10 == 0 or (i + 1) == total_batches:
-                progress = (i + 1) / total_batches * 100
-                print(
-                    f'\r\033[97m验证中: {progress:6.2f}% | Loss: {loss.item():.4f} | Acc: {acc.item() * 100:6.2f}%\033[0m',
-                    end='', flush=True)
+                # 每10个批次或最后一个批次显示进度
+                if (i + 1) % 10 == 0 or (i + 1) == total_batches:
+                    progress = (i + 1) / total_batches * 100
+                    print(
+                        f'\r\033[97m验证中: {progress:6.2f}% | Loss: {loss.item():.4f} | Acc: {acc.item() * 100:6.2f}%\033[0m',
+                        end='', flush=True)
 
         # 清除进度行
         print('\r\033[K', end='', flush=True)
@@ -152,21 +154,24 @@ class SentimentTrainer:
 
 
 
-    def train(self, epochs):
+    def train(self):
 
         print("开始训练...")
-        print(
-            f"{'Epoch':^6} | {'Train Loss':^10} | {'Train Acc':^10} | {'Val Loss':^10} | {'Val Acc':^10} | {'Val F1':^8} | {'Best':^6}")
-        print("-" * 85)
+        print(f"{'Epoch':^6} | {'Train Loss':^10} | {'Train Acc':^10} | {'Val Loss':^10} | {'Val Acc':^10} | {'Val F1':^8} | {'Time(s)':^8} | {'Best':^6}")
+        print("-" * 95)
 
-        for epoch in range(epochs):
-            start_time = time.time()
+        for epoch in range(self.epochs):
+            epoch_start_time = time.time()
 
             # 训练一个epoch
-            train_loss, train_acc = self.train_epoch(epoch, epochs)
+            train_loss, train_acc = self.train_epoch(epoch, self.epochs)
 
             # 验证
             val_metrics = self.evaluate(self.val_loader)
+
+            # 计算epoch时间
+            epoch_time = time.time() - epoch_start_time
+            self.epoch_times.append(epoch_time)
 
             # 记录历史
             self.train_losses.append(train_loss)
@@ -181,27 +186,19 @@ class SentimentTrainer:
                 is_best = True
                 self.save_checkpoint(epoch + 1, is_best=True)
 
-            # 计算训练时间
-            epoch_time = time.time() - start_time
-            if torch.cuda.is_available():
-                gpu_mem = f"{torch.cuda.max_memory_allocated() / 1E9:.1f}GB"
-            else:
-                gpu_mem = "0.0GB"
-
             # 打印输出行
-            print(f"{epoch + 1:>6} | {gpu_mem:>8} | {train_loss:>10.4f} | {train_acc * 100:>9.2f}% | "
-                  f"{val_metrics['loss']:>10.4f} | {val_metrics['accuracy'] * 100:>9.2f}% | {'256':>6}")
-
-            # 如果是第一个epoch，打印验证集的详细指标
-            if epoch == 0:
-                print(
-                    f"{'Class':>6} | {'Images':>8} | {'Instances':>11} | {'P':>6} | {'R':>6} | {'mAP50':>8} | {'mAP50-95':>10}")
-                print(f"{'all':>6} | {len(self.val_loader.dataset):>8} | {len(self.val_loader.dataset):>11} | "
-                      f"{val_metrics['precision']:>6.3f} | {val_metrics['recall']:>6.3f} | {val_metrics['accuracy']:>8.3f} | {val_metrics['f1']:>10.3f}")
+            print(f"{epoch + 1:>6} | {train_loss:>10.4f} | {train_acc * 100:>9.2f}% | "
+                  f"{val_metrics['loss']:>10.4f} | {val_metrics['accuracy'] * 100:>9.2f}% | "
+                  f"{val_metrics['f1']:>8.3f} | {epoch_time:>8.2f} | {'√' if is_best else '×':^6}")
 
         self.plot_training_history()
 
-        print(f"\n训练完成! 最佳验证集准确率: {self.best_val_accuracy * 100:.2f}%")
+        avg_epoch_time = sum(self.epoch_times) / len(self.epoch_times)
+        total_training_time = sum(self.epoch_times)
+        print(f"\n训练完成!")
+        print(f"总训练时间: {total_training_time:.2f}秒")
+        print(f"平均每个epoch时间: {avg_epoch_time:.2f}秒")
+        print(f"最佳验证集准确率: {self.best_val_accuracy * 100:.2f}%")
         print(f"最佳模型保存在: {self.best_model_path}")
 
     def plot_training_history(self):

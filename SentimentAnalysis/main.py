@@ -3,58 +3,53 @@ import torch
 from SentimentAnalysis import data_loader,train
 from SentimentAnalysis import model as m
 import time
-import os
-from tqdm import tqdm
 
-def train_model(embedding_type, freeze_embedding=False, glove_path=None):
-    """
-    训练指定嵌入类型的模型
-    """
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"\n=== 训练 {embedding_type} 嵌入模型 ===")
-    print(f"冻结嵌入层: {freeze_embedding}")
-    print(f"使用设备: {device}")
-    # 加载数据 - 修复返回值问题
-    result = data_loader.main()
-    if result is None:
-        print("数据加载失败!")
-        return None
-    train_loader, val_loader, test_loader, vocab_size, vocab = result
-
-    # 如果data_loader返回了vocab，使用它，否则需要从文件加载
-    vocab = None
-    if len(result) > 4:  # 如果返回了vocab
-        vocab = result[4]
-    else:
-        # 从文件加载vocab
-        vocab_file = os.path.join('data', 'vocab.txt')
-        if os.path.exists(vocab_file):
-            vocab = data_loader.load_vocabulary(vocab_file)
-        else:
-            print("警告: 无法加载词汇表")
-
+# 全局配置
+CONFIG = {
     # 模型参数
-    VOCAB_SIZE = vocab_size
-    EMBEDDING_DIM = 100
-    HIDDEN_DIM = 256
-    OUTPUT_DIM = 1
-    N_LAYERS = 2
-    DROPOUT = 0.5
-    PAD_IDX = 0
+    'EMBEDDING_DIM': 300,
+    'HIDDEN_DIM': 256,
+    'OUTPUT_DIM': 1,
+    'N_LAYERS': 2,
+    'DROPOUT': 0.5,
+    'PAD_IDX': 0,
 
-    # 选择嵌入方式
+    # 训练参数
+    'EPOCHS': 10,
+    'BATCH_SIZE': 32,
+
+    # 文件路径
+    'GLOVE_PATH': "glove.6B.300d.txt"
+}
+
+
+def get_model_config(vocab_size):
+    """获取模型配置"""
+    return {
+        'vocab_size': vocab_size,
+        'embedding_dim': CONFIG['EMBEDDING_DIM'],
+        'hidden_dim': CONFIG['HIDDEN_DIM'],
+        'output_dim': CONFIG['OUTPUT_DIM'],
+        'n_layers': CONFIG['N_LAYERS'],
+        'dropout': CONFIG['DROPOUT'],
+        'pad_idx': CONFIG['PAD_IDX']
+    }
+
+
+def create_model(model_config, embedding_type, vocab=None, freeze_embedding=False):
+    """创建指定嵌入类型的模型"""
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
     if embedding_type == "random":
         embedding_matrix = None
         print("使用随机初始化嵌入")
     elif embedding_type == "glove":
-        if glove_path is None:
-            print("错误: 使用GloVe需要提供glove_path")
-            return None
         if vocab is None:
-            print("错误: 无法加载词汇表，无法使用GloVe")
+            print("错误: 使用GloVe需要词汇表")
             return None
+
         embedding_matrix = data_loader.load_glove_embeddings(
-            glove_path, vocab, EMBEDDING_DIM
+            CONFIG['GLOVE_PATH'], vocab, CONFIG['EMBEDDING_DIM']
         )
         if embedding_matrix is None:
             print("错误: 加载GloVe词向量失败")
@@ -66,16 +61,35 @@ def train_model(embedding_type, freeze_embedding=False, glove_path=None):
 
     # 创建模型
     model = m.SentimentLSTM(
-        vocab_size=VOCAB_SIZE,
-        embedding_dim=EMBEDDING_DIM,
-        hidden_dim=HIDDEN_DIM,
-        output_dim=OUTPUT_DIM,
-        n_layers=N_LAYERS,
-        dropout=DROPOUT,
-        pad_idx=PAD_IDX,
+        **model_config,
         embedding_matrix=embedding_matrix,
         freeze_embedding=freeze_embedding
     ).to(device)
+
+    return model, device
+
+def train_model(embedding_type, freeze_embedding=False):
+    """
+    训练指定嵌入类型的模型
+    """
+    print(f"\n=== 训练 {embedding_type} 嵌入模型 ===")
+    print(f"冻结嵌入层: {freeze_embedding}")
+    # 加载数据 - 修复返回值问题
+    result = data_loader.main()
+    if result is None:
+        print("数据加载失败!")
+        return None
+    train_loader, val_loader, test_loader, vocab_size, vocab = result
+
+    # 获取模型配置
+    model_config = get_model_config(vocab_size)
+
+    # 创建模型
+    model, device = create_model(model_config, embedding_type, vocab, freeze_embedding)
+    if model is None:
+        return None
+
+    print(f"使用设备: {device}")
 
     # 为不同模型类型创建不同的保存目录
     model_suffix = embedding_type
@@ -85,12 +99,15 @@ def train_model(embedding_type, freeze_embedding=False, glove_path=None):
     save_dir = f'saved_models/{model_suffix}'
 
     # 创建训练器
-    trainer = train.SentimentTrainer(model, train_loader, val_loader, device, save_dir=save_dir)
+    trainer = train.SentimentTrainer(
+        model, train_loader, val_loader, device,
+        save_dir=save_dir,
+        epochs=CONFIG['EPOCHS']
+    )
 
     # 开始训练
     start_time = time.time()
-    trainer.train(epochs=5)
-
+    trainer.train()
     training_time = time.time() - start_time
 
     # 在测试集上评估
@@ -117,15 +134,17 @@ def compare_embeddings():
     print("开始比较不同嵌入方式的性能...")
     # 训练随机初始化模型
 
-    # 训练GloVe模型（不冻结）
-    print("\n2. 训练GloVe模型（不冻结）...")
-    results['glove_unfrozen'] = train_model("glove", freeze_embedding=False,
-                                            glove_path="glove.6B.100d.txt")
+    # 1. 训练随机初始化模型
+    print("\n1. 训练随机初始化模型...")
+    results['random'] = train_model("random")
 
-    # 训练GloVe模型（冻结）
+    # 2. 训练GloVe模型（不冻结）
+    print("\n2. 训练GloVe模型（不冻结）...")
+    results['glove_unfrozen'] = train_model("glove", freeze_embedding=False)
+
+    # 3. 训练GloVe模型（冻结）
     print("\n3. 训练GloVe模型（冻结）...")
-    results['glove_frozen'] = train_model("glove", freeze_embedding=True,
-                                          glove_path="glove.6B.100d.txt")
+    results['glove_frozen'] = train_model("glove", freeze_embedding=True)
 
     # 打印比较结果
     print("\n" + "=" * 60)
@@ -160,11 +179,11 @@ def main():
         if result is None:
             print("随机初始化模型训练失败!")
     elif choice == "2":
-        result = train_model("glove", freeze_embedding=False, glove_path="glove.6B.100d.txt")
+        result = train_model("glove", freeze_embedding=False)
         if result is None:
             print("GloVe不冻结模型训练失败!")
     elif choice == "3":
-        result = train_model("glove", freeze_embedding=True, glove_path="glove.6B.100d.txt")
+        result = train_model("glove", freeze_embedding=True)
         if result is None:
             print("GloVe冻结模型训练失败!")
     elif choice == "4":
