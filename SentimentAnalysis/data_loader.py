@@ -8,6 +8,8 @@ import json
 import re
 from torch.utils.data import DataLoader
 from SentimentAnalysis.IMDBDataset import IMDBDataset
+from SentimentAnalysis.IMDBDatasetBERT import IMDBDatasetBERT
+
 
 def clean_text(text):
     """
@@ -240,6 +242,81 @@ def create_data_loaders(train_df, val_df, test_df, batch_size=32, shuffle=True):
     return train_loader, val_loader, test_loader
 
 
+def create_bert_data_loaders(train_df, val_df, test_df, batch_size=16,
+                             num_workers=None,max_length = 512 ):
+    """
+    创建BERT专用的DataLoader
+    """
+    print("正在创建BERT DataLoader...")
+
+    if num_workers is None:
+        num_workers = 4 if torch.cuda.is_available() else 2
+
+    # 确保输入是DataFrame且包含必要的列
+    for df, name in [(train_df, '训练集'), (val_df, '验证集'), (test_df, '测试集')]:
+        if not isinstance(df, pd.DataFrame):
+            raise TypeError(f"{name}必须是pandas DataFrame")
+        if 'clean_text' not in df.columns or 'label' not in df.columns:
+            raise ValueError(f"{name}必须包含'clean_text'和'label'列")
+
+    print("正在创建BERT DataLoader...")
+
+    # 创建BERT Dataset实例
+    train_dataset = IMDBDatasetBERT(
+        texts=train_df['clean_text'].tolist(),
+        labels=train_df['label'].tolist(),
+        max_length=max_length
+    )
+
+    val_dataset = IMDBDatasetBERT(
+        texts=val_df['clean_text'].tolist(),
+        labels=val_df['label'].tolist(),
+        max_length=max_length
+    )
+
+    test_dataset = IMDBDatasetBERT(
+        texts=test_df['clean_text'].tolist(),
+        labels=test_df['label'].tolist(),
+        max_length=max_length
+    )
+
+    # 使用优化配置创建DataLoader
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,  # 训练集需要打乱
+        num_workers=num_workers,
+        pin_memory=True,  # 加速GPU数据传输
+        persistent_workers=num_workers > 0,  # 减少进程创建开销
+        drop_last=True  # 丢弃最后一个不完整的batch
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,  # 验证集不需要打乱
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=num_workers > 0
+    )
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,  # 测试集不需要打乱
+        num_workers=num_workers,
+        pin_memory=True,
+        persistent_workers=num_workers > 0
+    )
+
+    print("=== BERT DataLoader 统计信息 ===")
+    print(f"训练集: {len(train_dataset)} 样本, {len(train_loader)} 批次")
+    print(f"验证集: {len(val_dataset)} 样本, {len(val_loader)} 批次")
+    print(f"测试集: {len(test_dataset)} 样本, {len(test_loader)} 批次")
+    print(f"批次大小: {batch_size}")
+
+    return train_loader, val_loader, test_loader
+
 def collate_fn(batch):
     """
     自定义批次处理函数，支持动态padding和按长度排序
@@ -299,7 +376,7 @@ def analyze_dataset(df, name="数据集"):
         print(f"最大文本长度: {text_lengths.max()}")
         print(f"最小文本长度: {text_lengths.min()}")
 
-def main():
+def load_data():
     train_file = 'imdb_train_processed.csv'
     test_file = 'imdb_test_processed.csv'
     vocab_file = os.path.join('data', 'vocab.txt')
@@ -392,9 +469,82 @@ def main():
     return train_loader, val_loader, test_loader, len(vocab), vocab
 
 
+def load_bert_data(batch_size=16, max_length=512):
+    """
+    加载BERT专用的数据
+    """
+    train_file = 'imdb_train_processed.csv'
+    test_file = 'imdb_test_processed.csv'
+
+    # 检查数据文件是否存在
+    if not os.path.exists(train_file) or not os.path.exists(test_file):
+        print(f"错误: 数据文件不存在")
+        print(f"请确保以下文件存在:")
+        print(f"- {train_file}")
+        print(f"- {test_file}")
+        return None, None, None
+
+    print("正在加载BERT数据...")
+
+    # 读取原始数据
+    try:
+        train_df = pd.read_csv(train_file)
+        test_df = pd.read_csv(test_file)
+        print(f"训练集大小: {len(train_df)}, 测试集大小: {len(test_df)}")
+    except Exception as e:
+        print(f"数据加载失败: {e}")
+        return None, None, None
+
+    # 处理数据（文本清理和标签转换）
+    train_df = process_dataframe(train_df, clean_text_func=clean_text)
+    test_df = process_dataframe(test_df, clean_text_func=clean_text)
+
+    # 分析数据集
+    analyze_dataset(train_df, "BERT训练集")
+    analyze_dataset(test_df, "BERT测试集")
+
+    # 直接使用DataFrame进行划分，而不是转换为列表
+    train_processed, val_processed = train_test_split(
+        train_df,
+        test_size=0.2,
+        random_state=42,
+        stratify=train_df['label']
+    )
+
+    # 重置索引
+    train_processed = train_processed.reset_index(drop=True)
+    val_processed = val_processed.reset_index(drop=True)
+    test_processed = test_df.reset_index(drop=True)
+
+    print(f"\nBERT数据划分完成:")
+    print(f"训练集: {len(train_processed)}, 验证集: {len(val_processed)}, 测试集: {len(test_processed)}")
+
+    # 创建BERT DataLoader
+    train_loader, val_loader, test_loader = create_bert_data_loaders(
+        train_processed, val_processed, test_processed,
+        batch_size=batch_size,
+        max_length=max_length
+    )
+
+    # 测试BERT DataLoader
+    print("\n=== BERT DataLoader 测试 ===")
+    for i, batch in enumerate(train_loader):
+        if i == 0:  # 只查看第一个批次
+            input_ids = batch['input_ids']
+            attention_mask = batch['attention_mask']
+            labels = batch['labels']
+
+            print(f"输入ID形状: {input_ids.shape}")
+            print(f"注意力掩码形状: {attention_mask.shape}")
+            print(f"标签形状: {labels.shape}")
+            print(f"标签示例: {labels[:5]}")
+            break
+
+    return train_loader, val_loader, test_loader
+
 
 if __name__ == "__main__":
-    train_loader, val_loader, test_loader, vocab_size = main()
+    train_loader, val_loader, test_loader, vocab_size = load_data()
     if train_loader is not None:
         print(f"\n数据加载成功! 词汇表大小: {vocab_size}")
     else:

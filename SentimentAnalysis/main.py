@@ -3,6 +3,10 @@ import torch
 from SentimentAnalysis import data_loader,train
 from SentimentAnalysis import model as m
 import time
+import os
+import bert_main
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="huggingface_hub")
 
 # 全局配置
 CONFIG = {
@@ -15,11 +19,11 @@ CONFIG = {
     'PAD_IDX': 0,
 
     # 训练参数
-    'EPOCHS': 10,
+    'EPOCHS': 1,
     'BATCH_SIZE': 32,
 
     # 文件路径
-    'GLOVE_PATH': "glove.6B.300d.txt"
+    'GLOVE_PATH': os.path.join(os.getcwd(),"data","glove.6B.300d.txt")
 }
 
 
@@ -75,7 +79,7 @@ def train_model(embedding_type, freeze_embedding=False):
     print(f"\n=== 训练 {embedding_type} 嵌入模型 ===")
     print(f"冻结嵌入层: {freeze_embedding}")
     # 加载数据 - 修复返回值问题
-    result = data_loader.main()
+    result = data_loader.load_data()
     if result is None:
         print("数据加载失败!")
         return None
@@ -172,8 +176,9 @@ def main():
     print("3. 预训练GloVe嵌入（冻结）")
     print("4. 比较所有嵌入方式")
     print("5. 运行我的数据分析")
+    print("6. 运行bert微调")
 
-    choice = input("请输入选择 (1-5): ").strip()
+    choice = input("请输入选择 (1-6): ").strip()
 
     if choice == "1":
         result = train_model("random")
@@ -204,6 +209,10 @@ def main():
         except Exception as e:
             print(f"数据分析运行失败: {e}")
             print("请确保my_data_analysis.py文件存在")
+    elif choice == "6":
+        result = bert_main.train_bert()
+        if result is None:
+            print("GloVe不冻结模型训练失败!")
     else:
         print("无效选择")
 
