@@ -126,7 +126,7 @@ class IMDBDataAnalyzer:
 
     def clean_text(self, text):
         """
-        改进的文本清洗函数
+        改进的文本清洗函数 - 更彻底的清理
         """
         if not isinstance(text, str):
             return ""
@@ -137,11 +137,24 @@ class IMDBDataAnalyzer:
         text = re.sub(r'http\S+', '', text)
         # 3. 移除@提及
         text = re.sub(r'@\w+', '', text)
+
         # 4. 小写化
         text = text.lower()
-        # 5. 处理特殊字符
-        text = re.sub(r'[^a-zA-Z0-9\s\.,!?]', '', text)
-        # 6. 合并多余空格
+
+        # 5. 处理省略号（多个连续的点）
+        text = re.sub(r'\.{2,}', ' ', text)
+
+        # 6. 移除所有标点符号，但保留单词内部的连字符和撇号
+        # 这个正则表达式会保留字母、数字、空格和单词内部的连字符(-)和撇号(')
+        text = re.sub(r'[^\w\s\'-]', ' ', text)
+
+        # 7. 处理单词开头或结尾的标点
+        # 移除单词开头的标点（连字符和撇号除外）
+        text = re.sub(r'\s+[-\\']', ' ', text)
+        # 移除单词结尾的标点（连字符和撇号除外）
+        text = re.sub(r'[-\\']\s+', ' ', text)
+
+        # 8. 合并多余空格
         text = re.sub(r'\s+', ' ', text).strip()
 
         return text
@@ -187,17 +200,85 @@ class IMDBDataAnalyzer:
 
         return self.train_df, self.test_df
 
-    def apply_tokenization(self):
-        """
-        应用分词
-        """
-        print("Adding tokenization using space split...")
+    def tokenize_word_level(self, text):
+        """单词级别分词 - 简单空格分词"""
+        import string
+        if not isinstance(text, str):
+            return []
 
-        def tokenize_text(text):
-            """Use simple space splitting for tokenization"""
-            if not isinstance(text, str):
-                return []
-            return text.split()
+        # 使用空格分词，并过滤掉空字符串
+        tokens = text.split()
+
+        # 进一步清理：移除只包含标点的token
+        cleaned_tokens = []
+        for token in tokens:
+            # 移除token开头和结尾的标点
+            clean_token = token.strip(string.punctuation)
+            if clean_token:  # 确保不是空字符串
+                cleaned_tokens.append(clean_token)
+
+        return cleaned_tokens
+
+    def tokenize_character_level(self, text):
+        """字符级别分词"""
+        if not isinstance(text, str):
+            return []
+
+        # 移除空格，将文本拆分为字符
+        text_no_spaces = text.replace(' ', '')
+        characters = list(text_no_spaces)
+
+        return characters
+
+    def tokenize_subword_level(self, text, min_n=2, max_n=4):
+        """子词级别分词 - 使用n-gram方法"""
+        if not isinstance(text, str):
+            return []
+
+        # 首先进行单词级别分词
+        words = self.tokenize_word_level(text)
+        subwords = []
+
+        for word in words:
+            # 对于短单词，直接保留
+            if len(word) <= min_n:
+                subwords.append(word)
+                continue
+
+            # 对于长单词，使用n-gram拆分
+            # 生成不同长度的n-gram
+            for n in range(min_n, min(max_n + 1, len(word) + 1)):
+                for i in range(len(word) - n + 1):
+                    subword = word[i:i + n]
+                    subwords.append(subword)
+
+            # 同时保留完整的单词
+            subwords.append(word)
+
+        return subwords
+
+    def tokenize_text(self, text, tokenization_type='word', **kwargs):
+        """
+        根据选择的分词类型进行分词
+        """
+        if tokenization_type == 'word':
+            return self.tokenize_word_level(text)
+        elif tokenization_type == 'char':
+            return self.tokenize_character_level(text)
+        elif tokenization_type == 'subword':
+            min_n = kwargs.get('min_n', 2)
+            max_n = kwargs.get('max_n', 4)
+            return self.tokenize_subword_level(text, min_n=min_n, max_n=max_n)
+        else:
+            raise ValueError(f"不支持的分词类型: {tokenization_type}。请选择 'word', 'char' 或 'subword'")
+
+    def apply_tokenization(self, tokenization_type='word', **kwargs):
+        """
+        应用分词 - 支持多种分词类型
+        tokenization_type: 分词类型，可选 'word', 'char', 'subword'
+        **kwargs: 分词参数，如subword分词的min_n和max_n
+        """
+        print(f"Applying {tokenization_type} tokenization...")
 
         # 检查数据是否存在
         if self.train_df is None or len(self.train_df) == 0:
@@ -208,9 +289,21 @@ class IMDBDataAnalyzer:
             print("错误: 测试集为空，无法进行分词")
             return None, None
 
-        # Apply simple tokenization
-        self.train_df['tokens'] = self.train_df['clean_text'].apply(tokenize_text)
-        self.test_df['tokens'] = self.test_df['clean_text'].apply(tokenize_text)
+        # Apply tokenization based on type
+        if tokenization_type == 'subword':
+            self.train_df['tokens'] = self.train_df['clean_text'].apply(
+                lambda x: self.tokenize_text(x, tokenization_type, **kwargs)
+            )
+            self.test_df['tokens'] = self.test_df['clean_text'].apply(
+                lambda x: self.tokenize_text(x, tokenization_type, **kwargs)
+            )
+        else:
+            self.train_df['tokens'] = self.train_df['clean_text'].apply(
+                lambda x: self.tokenize_text(x, tokenization_type)
+            )
+            self.test_df['tokens'] = self.test_df['clean_text'].apply(
+                lambda x: self.tokenize_text(x, tokenization_type)
+            )
 
         print("Tokenization completed!")
 
@@ -514,11 +607,15 @@ class IMDBDataAnalyzer:
             print("Data not saved")
             return None, None
 
-    def run_complete_analysis(self, max_sequence_length=256, save_plots=True):
+    def run_complete_analysis(self, max_sequence_length=256, save_plots=True,
+                             tokenization_type='word', tokenization_params=None):
         """
         运行完整的数据分析流程
         """
         print("=== Running Complete IMDB Data Analysis ===")
+
+        if tokenization_params is None:
+            tokenization_params = {}
 
         try:
             # 1. 加载数据
@@ -535,7 +632,7 @@ class IMDBDataAnalyzer:
 
             # 3. 分词
             print("步骤 3/7: 分词...")
-            self.apply_tokenization()
+            self.apply_tokenization(tokenization_type, **tokenization_params)
 
             # 4. 统计分析
             print("步骤 4/7: 统计分析...")
@@ -573,7 +670,7 @@ class IMDBDataAnalyzer:
             return {}
 
 
-def run_my_analysis(data_path="aclImdb"):
+def run_my_analysis(data_path="aclImdb", tokenization_type='word', tokenization_params=None):
     """
     运行完整分析流程的便捷函数
     在main.py中调用
@@ -582,7 +679,10 @@ def run_my_analysis(data_path="aclImdb"):
 
     try:
         analyzer = IMDBDataAnalyzer(data_path)
-        stats = analyzer.run_complete_analysis()
+        stats = analyzer.run_complete_analysis(
+            tokenization_type=tokenization_type,
+            tokenization_params=tokenization_params
+        )
 
         if stats:
             print("\n=== Analysis Summary ===")
@@ -635,7 +735,12 @@ if __name__ == "__main__":
     if data_path is None:
         data_path = "aclImdb"  # 默认路径
 
-    stats = run_my_analysis(data_path)
+    # 测试不同的分词类型
+    stats = run_my_analysis(data_path, tokenization_type='word')
+
+    # 也可以测试其他分词类型：
+    # stats = run_my_analysis(data_path, tokenization_type='char')
+    # stats = run_my_analysis(data_path, tokenization_type='subword', tokenization_params={'min_n': 2, 'max_n': 4})
 
     if stats:
         print("\n分析成功完成!")
