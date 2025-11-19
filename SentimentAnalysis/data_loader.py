@@ -172,7 +172,7 @@ def process_dataframe(df, text_column='review', label_column='sentiment', clean_
     return df_processed
 
 
-def create_data_loaders(train_df, val_df, test_df, batch_size=32, shuffle=True):
+def create_data_loaders(train_df, val_df, test_df, batch_size=None, shuffle=True, num_workers=None):
     """
     创建支持动态padding的DataLoader
 
@@ -181,6 +181,11 @@ def create_data_loaders(train_df, val_df, test_df, batch_size=32, shuffle=True):
     batch_size: 批量大小
     shuffle: 是否打乱训练数据
     """
+    # 使用配置中的默认值或传入的参数
+    if batch_size is None:
+        batch_size = CONFIG['BATCH_SIZE']
+    if num_workers is None:
+        num_workers = CONFIG['NUM_WORKERS']  # 使用CONFIG中的设置
 
     # 确保输入是DataFrame且包含必要的列
     for df, name in [(train_df, '训练集'), (val_df, '验证集'), (test_df, '测试集')]:
@@ -213,7 +218,8 @@ def create_data_loaders(train_df, val_df, test_df, batch_size=32, shuffle=True):
         batch_size=batch_size,
         shuffle=shuffle,  # 使用传入的shuffle参数
         collate_fn=collate_fn,
-        num_workers=0
+        num_workers=num_workers,  # 添加num_workers支持
+        pin_memory=torch.cuda.is_available()  # 如果有GPU则使用pin_memory
     )
 
     val_loader = DataLoader(
@@ -221,7 +227,8 @@ def create_data_loaders(train_df, val_df, test_df, batch_size=32, shuffle=True):
         batch_size=batch_size,
         shuffle=False,  # 验证集不需要打乱
         collate_fn=collate_fn,
-        num_workers=0
+        num_workers=num_workers,  # 添加num_workers支持
+        pin_memory=torch.cuda.is_available()  # 如果有GPU则使用pin_memory
     )
 
     test_loader = DataLoader(
@@ -229,7 +236,8 @@ def create_data_loaders(train_df, val_df, test_df, batch_size=32, shuffle=True):
         batch_size=batch_size,
         shuffle=False,  # 测试集不需要打乱
         collate_fn=collate_fn,
-        num_workers=0
+        num_workers=num_workers,  # 添加num_workers支持
+        pin_memory=torch.cuda.is_available()  # 如果有GPU则使用pin_memory
     )
 
     # 打印统计信息
@@ -243,15 +251,20 @@ def create_data_loaders(train_df, val_df, test_df, batch_size=32, shuffle=True):
     return train_loader, val_loader, test_loader
 
 
-def create_bert_data_loaders(train_df, val_df, test_df, batch_size=16,
-                             num_workers=None,max_length = 512 ):
+def create_bert_data_loaders(train_df, val_df, test_df, batch_size=None,
+                             num_workers=None, max_length = None ):
     """
     创建BERT专用的DataLoader
     """
     print("正在创建BERT DataLoader...")
 
+    # 使用配置中的默认值或传入的参数
+    if batch_size is None:
+        batch_size = CONFIG['BERT_BATCH_SIZE']
     if num_workers is None:
-        num_workers = 4 if torch.cuda.is_available() else 2
+        num_workers = CONFIG['NUM_WORKERS']  # 使用CONFIG中的设置
+    if max_length is None:
+        max_length = CONFIG['BERT_MAX_LENGTH']
 
     # 确保输入是DataFrame且包含必要的列
     for df, name in [(train_df, '训练集'), (val_df, '验证集'), (test_df, '测试集')]:
@@ -467,8 +480,9 @@ def load_data():
     # 创建DataLoader
     train_loader, val_loader, test_loader = create_data_loaders(
         train_processed, val_processed, test_processed,
-        batch_size=32,
-        shuffle=True
+        batch_size=CONFIG['BATCH_SIZE'],
+        shuffle=True,
+        num_workers=CONFIG['NUM_WORKERS']  # 使用CONFIG中的设置
     )
 
     # 测试DataLoader
@@ -490,7 +504,7 @@ def load_data():
     return train_loader, val_loader, test_loader, len(vocab), vocab
 
 
-def load_bert_data(batch_size=None, max_length=None):
+def load_bert_data(batch_size=None, max_length=None, num_workers=None):
     """
     加载BERT专用的数据
     """
@@ -550,7 +564,8 @@ def load_bert_data(batch_size=None, max_length=None):
     train_loader, val_loader, test_loader = create_bert_data_loaders(
         train_processed, val_processed, test_processed,
         batch_size=batch_size,
-        max_length=max_length
+        max_length=max_length,
+        num_workers = num_workers  # 使用CONFIG中的设置
     )
 
     # 测试BERT DataLoader
