@@ -9,15 +9,15 @@ import os
 
 
 class SentimentTrainer:
-    def __init__(self, model, train_loader, val_loader, device, save_dir='saved_models', epochs=10):
+    def __init__(self, model, train_loader, val_loader, device, save_dir=None, epochs=10):
         self.model = model
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.device = device
-        self.save_dir = save_dir
+        self.save_dir = save_dir if save_dir else os.path.join('saved_models')
         self.epochs = epochs
 
-        os.makedirs(save_dir, exist_ok=True)
+        os.makedirs(self.save_dir, exist_ok=True)
 
         # 损失函数和优化器
         self.criterion = nn.BCEWithLogitsLoss()

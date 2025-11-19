@@ -48,16 +48,16 @@ class BERTFineTuningStrategies:
         return strategies.get(strategy_name, strategies['last_2_layers'])
 
 class BERTTrainer:
-    def __init__(self, model, train_loader, val_loader, device, save_dir='saved_models/bert', epochs=3,strategy='last_2_layers'):
+    def __init__(self, model, train_loader, val_loader, device, save_dir=None, epochs=3,strategy='last_2_layers'):
         self.model = model
         self.train_loader = train_loader
         self.val_loader = val_loader
         self.device = device
-        self.save_dir = save_dir
+        self.save_dir = save_dir if save_dir else os.path.join('saved_models', 'bert')
         self.epochs = epochs
         self.strategy_config = BERTFineTuningStrategies.get_strategy(strategy)
 
-        os.makedirs(save_dir, exist_ok=True)
+        os.makedirs(self.save_dir, exist_ok=True)
 
         # 损失函数
         self.criterion = nn.BCEWithLogitsLoss()

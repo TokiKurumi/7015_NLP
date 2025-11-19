@@ -2,29 +2,13 @@
 import torch
 from SentimentAnalysis import data_loader,train
 from SentimentAnalysis import model as m
+from SentimentAnalysis.bert_model import BERTSentimentClassifier
+from SentimentAnalysis.bert_train import BERTFineTuningStrategies, BERTTrainer
 import time
 import os
-import bert_main
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="huggingface_hub")
-
-# 全局配置
-CONFIG = {
-    # 模型参数
-    'EMBEDDING_DIM': 300,
-    'HIDDEN_DIM': 256,
-    'OUTPUT_DIM': 1,
-    'N_LAYERS': 2,
-    'DROPOUT': 0.5,
-    'PAD_IDX': 0,
-
-    # 训练参数
-    'EPOCHS': 1,
-    'BATCH_SIZE': 32,
-
-    # 文件路径
-    'GLOVE_PATH': os.path.join(os.getcwd(),"data","glove.6B.300d.txt")
-}
+from config import CONFIG
 
 
 def get_model_config(vocab_size):
@@ -72,6 +56,59 @@ def create_model(model_config, embedding_type, vocab=None, freeze_embedding=Fals
 
     return model, device
 
+def create_bert_model(strategy='last_2_layers'):
+    """创建BERT微调模型"""
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    strategy_config = BERTFineTuningStrategies.get_strategy(strategy)
+
+    model = BERTSentimentClassifier(
+        dropout=strategy_config['dropout'],
+        freeze_bert_layers=strategy_config['freeze_bert_layers'],
+        classifier_hidden_size=strategy_config['classifier_hidden_size']
+    ).to(device)
+
+    return model, strategy_config, device
+
+def train_bert():
+    """训练BERT微调模型"""
+    print("=== BERT微调训练 ===")
+    strategy = "last_2_layers"
+    # 创建模型
+    model, strategy_config, device = create_bert_model(strategy)
+
+    result = data_loader.load_bert_data(
+        batch_size=CONFIG['BERT_BATCH_SIZE'],
+        max_length=CONFIG['BERT_MAX_LENGTH']
+    )
+    if result is None:
+        print("数据加载失败!")
+        return None
+    train_loader, val_loader, test_loader = result
+
+    # 创建训练器
+    trainer = BERTTrainer(model, train_loader, val_loader, device,
+                         save_dir=CONFIG['BERT_SAVE_DIR'],
+                         epochs=CONFIG['BERT_EPOCHS'])
+
+    # 开始训练
+    start_time = time.time()
+    trainer.train()
+    training_time = time.time() - start_time
+
+    # 在测试集上评估
+    test_metrics = trainer.evaluate(test_loader)
+    print(f"\n=== Bert 策略： {strategy} 模型最终结果 ===")
+    print(f"测试集准确率: {test_metrics['accuracy'] * 100:.2f}%")
+    print(f"测试集F1分数: {test_metrics['f1']:.3f}")
+
+    return {
+        'test_metrics': test_metrics,
+        'training_time': training_time,
+        'model': model,
+        'trainer': trainer
+    }
+
 def train_model(embedding_type, freeze_embedding=False):
     """
     训练指定嵌入类型的模型
@@ -100,7 +137,8 @@ def train_model(embedding_type, freeze_embedding=False):
     if embedding_type == "glove":
         model_suffix += "_frozen" if freeze_embedding else "_unfrozen"
 
-    save_dir = f'saved_models/{model_suffix}'
+    save_dir = os.path.join(CONFIG['SAVE_DIR'], model_suffix)
+
 
     # 创建训练器
     trainer = train.SentimentTrainer(
@@ -210,9 +248,9 @@ def main():
             print(f"数据分析运行失败: {e}")
             print("请确保my_data_analysis.py文件存在")
     elif choice == "6":
-        result = bert_main.train_bert()
+        result = train_bert()
         if result is None:
-            print("GloVe不冻结模型训练失败!")
+            print("BERT微调训练失败!")
     else:
         print("无效选择")
 

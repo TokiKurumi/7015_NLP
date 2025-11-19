@@ -8,7 +8,9 @@ from SentimentAnalysis.bert_train import BERTFineTuningStrategies, BERTTrainer
 from SentimentAnalysis.IMDBDatasetBERT import IMDBDatasetBERT
 from torch.utils.data import DataLoader
 
-
+CONFIG = {
+    'BERT_SAVE_DIR': os.path.join(os.getcwd(), "saved_models", "bert")
+}
 def create_bert_model(strategy='last_2_layers'):
     """创建BERT微调模型"""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -38,7 +40,7 @@ def train_bert():
     train_loader, val_loader, test_loader = result
 
     # 创建训练器
-    trainer = BERTTrainer(model, train_loader, val_loader, device)
+    trainer = BERTTrainer(model, train_loader, val_loader, device, save_dir=CONFIG['BERT_SAVE_DIR'])
 
     # 开始训练
     start_time = time.time()

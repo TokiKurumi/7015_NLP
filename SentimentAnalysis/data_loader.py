@@ -9,6 +9,7 @@ import re
 from torch.utils.data import DataLoader
 from SentimentAnalysis.IMDBDataset import IMDBDataset
 from SentimentAnalysis.IMDBDatasetBERT import IMDBDatasetBERT
+from config import CONFIG
 
 
 def clean_text(text):
@@ -377,9 +378,9 @@ def analyze_dataset(df, name="数据集"):
         print(f"最小文本长度: {text_lengths.min()}")
 
 def load_data():
-    train_file = 'imdb_train_processed.csv'
-    test_file = 'imdb_test_processed.csv'
-    vocab_file = os.path.join('data', 'vocab.txt')
+    train_file = CONFIG['TRAIN_FILE']
+    test_file = CONFIG['TEST_FILE']
+    vocab_file = CONFIG['VOCAB_FILE']
 
     # 检查数据文件是否存在
     if not os.path.exists(train_file) or not os.path.exists(test_file):
@@ -469,12 +470,18 @@ def load_data():
     return train_loader, val_loader, test_loader, len(vocab), vocab
 
 
-def load_bert_data(batch_size=16, max_length=512):
+def load_bert_data(batch_size=None, max_length=None):
     """
     加载BERT专用的数据
     """
-    train_file = 'imdb_train_processed.csv'
-    test_file = 'imdb_test_processed.csv'
+    train_file = CONFIG['TRAIN_FILE']
+    test_file = CONFIG['TEST_FILE']
+
+    # 使用配置中的默认值或传入的参数
+    if batch_size is None:
+        batch_size = CONFIG['BERT_BATCH_SIZE']
+    if max_length is None:
+        max_length = CONFIG['BERT_MAX_LENGTH']
 
     # 检查数据文件是否存在
     if not os.path.exists(train_file) or not os.path.exists(test_file):

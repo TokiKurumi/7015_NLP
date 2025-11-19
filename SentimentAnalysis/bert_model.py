@@ -1,8 +1,10 @@
 import torch
 import torch.nn as nn
-from transformers import AutoModel, AutoConfig
-
+from transformers import AutoModel, AutoConfig, BertModel, BertConfig
+from config import CONFIG
+import os
 class BERTSentimentClassifier(nn.Module):
+
 
     def __init__(self,  dropout=0.2,freeze_bert_layers=None, classifier_hidden_size=256):
         """
@@ -10,9 +12,29 @@ class BERTSentimentClassifier(nn.Module):
         :param classifier_hidden_size: set the mlp hidden size
         """
         super().__init__()
-        model_name = 'bert-base-uncased'
-        self.bert = AutoModel.from_pretrained(model_name)
-        self.config = AutoConfig.from_pretrained(model_name)
+        local_path = CONFIG['BERT_LOCAL_PATH']
+        try:
+            # 检查本地是否有配置文件
+            if os.path.exists(os.path.join(local_path, "bert_config.json")):
+                print(f"从本地加载BERT模型: {local_path}")
+
+                self.config = AutoConfig.from_pretrained(local_path)
+
+                # 对于 TensorFlow 格式的检查点文件，我们需要特殊处理
+                # 由于您提供的是 TensorFlow 格式，我们需要使用 PyTorch 版本的模型
+                # 这里我们回退到从 Hugging Face 下载 PyTorch 版本
+                print("检测到TensorFlow格式模型，使用PyTorch版本的BERT...")
+                self.bert = AutoModel.from_pretrained(CONFIG['BERT_MODEL_NAME'])
+            else:
+                print("本地BERT配置文件不存在，从网络下载...")
+                self.bert = AutoModel.from_pretrained(CONFIG['BERT_MODEL_NAME'])
+                self.config = AutoConfig.from_pretrained(CONFIG['BERT_MODEL_NAME'])
+
+        except Exception as e:
+            print(f"加载BERT模型失败: {e}")
+            print("尝试从网络下载BERT模型...")
+            self.bert = AutoModel.from_pretrained(CONFIG['BERT_MODEL_NAME'])
+            self.config = AutoConfig.from_pretrained(CONFIG['BERT_MODEL_NAME'])
 
         # freeze layer
         if freeze_bert_layers is not None:
