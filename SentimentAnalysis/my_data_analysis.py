@@ -146,13 +146,13 @@ class IMDBDataAnalyzer:
 
         # 6. 移除所有标点符号，但保留单词内部的连字符和撇号
         # 这个正则表达式会保留字母、数字、空格和单词内部的连字符(-)和撇号(')
-        text = re.sub(r'[^\w\s\'-]', ' ', text)
+        text = re.sub(r"[^\w\s'-]", ' ', text)
 
         # 7. 处理单词开头或结尾的标点
         # 移除单词开头的标点（连字符和撇号除外）
-        text = re.sub(r'\s+[-\\']', ' ', text)
+        text = re.sub(r"\s+[-']", ' ', text)
         # 移除单词结尾的标点（连字符和撇号除外）
-        text = re.sub(r'[-\\']\s+', ' ', text)
+        text = re.sub(r"[-']\s+", ' ', text)
 
         # 8. 合并多余空格
         text = re.sub(r'\s+', ' ', text).strip()
@@ -275,8 +275,6 @@ class IMDBDataAnalyzer:
     def apply_tokenization(self, tokenization_type='word', **kwargs):
         """
         应用分词 - 支持多种分词类型
-        tokenization_type: 分词类型，可选 'word', 'char', 'subword'
-        **kwargs: 分词参数，如subword分词的min_n和max_n
         """
         print(f"Applying {tokenization_type} tokenization...")
 
@@ -289,13 +287,25 @@ class IMDBDataAnalyzer:
             print("错误: 测试集为空，无法进行分词")
             return None, None
 
-        # Apply tokenization based on type
+        # 定义分词类型常量
+        TOKENIZATION_TYPES = {
+            'word': {'name': 'Word-level (单词级)', 'folder': 'word_level'},
+            'char': {'name': 'Character-level (字符级)', 'folder': 'char_level'},
+            'subword': {'name': 'Subword-level (子词级)', 'folder': 'subword_level'}
+        }
+
+        selected_tokenization_name = TOKENIZATION_TYPES.get(tokenization_type, TOKENIZATION_TYPES['word'])['name']
+        print(f"使用分词类型: {selected_tokenization_name}")
+
+        # 应用分词
         if tokenization_type == 'subword':
+            min_n = kwargs.get('min_n', 2)
+            max_n = kwargs.get('max_n', 4)
             self.train_df['tokens'] = self.train_df['clean_text'].apply(
-                lambda x: self.tokenize_text(x, tokenization_type, **kwargs)
+                lambda x: self.tokenize_text(x, tokenization_type, min_n=min_n, max_n=max_n)
             )
             self.test_df['tokens'] = self.test_df['clean_text'].apply(
-                lambda x: self.tokenize_text(x, tokenization_type, **kwargs)
+                lambda x: self.tokenize_text(x, tokenization_type, min_n=min_n, max_n=max_n)
             )
         else:
             self.train_df['tokens'] = self.train_df['clean_text'].apply(
@@ -321,6 +331,145 @@ class IMDBDataAnalyzer:
             print(f"显示分词示例时出错: {e}")
 
         return self.train_df, self.test_df
+
+    def convert_to_sequences(self, max_sequence_length=None):
+        """
+        将文本转换为数值序列 - 修复版本
+        """
+        print("Converting text to numerical sequences...")
+
+        # 检查词汇表是否存在
+        if self.vocab is None:
+            print("错误: 词汇表为空，请先构建词汇表")
+            return None, None
+
+        def text_to_sequence(text, vocab, max_length=None):
+            """Convert text to numerical sequence"""
+            words = text.split()
+            sequence = []
+
+            for word in words:
+                # If word is in vocabulary, use its index; otherwise use <UNK> token
+                sequence.append(vocab.get(word, vocab['<UNK>']))
+
+            # Truncate if max_length is specified
+            if max_length and len(sequence) > max_length:
+                sequence = sequence[:max_length]
+
+            return sequence
+
+        # 安全地测试转换
+        try:
+            if len(self.train_df) > 0:
+                sample_text = self.train_df['clean_text'].iloc[0]
+                sample_sequence = text_to_sequence(sample_text, self.vocab)
+                print(f"Sample text: {sample_text[:100]}...")
+                print(f"Converted sequence (first 20): {sample_sequence[:20]}")
+                print(f"Sequence length: {len(sample_sequence)}")
+        except Exception as e:
+            print(f"测试序列转换时出错: {e}")
+
+        # Apply to all data
+        self.train_df['sequence'] = self.train_df['clean_text'].apply(
+            lambda x: text_to_sequence(x, self.vocab, max_sequence_length)
+        )
+        self.test_df['sequence'] = self.test_df['clean_text'].apply(
+            lambda x: text_to_sequence(x, self.vocab, max_sequence_length)
+        )
+
+        # Calculate sequence length statistics
+        sequence_lengths = [len(seq) for seq in self.train_df['sequence']]
+        if max_sequence_length is None:
+            max_sequence_length = int(np.percentile(sequence_lengths, 95))
+
+        self.stats['avg_sequence_length'] = np.mean(sequence_lengths)
+        self.stats['max_sequence_length'] = max_sequence_length
+        self.stats['sequence_lengths'] = sequence_lengths
+
+        print("Text to sequence conversion completed!")
+        print(f"Average sequence length: {self.stats['avg_sequence_length']:.1f}")
+        print(f"Selected max sequence length: {max_sequence_length}")
+
+        return self.train_df, self.test_df
+
+    def pad_sequences(self, max_length=None, pad_value=0):
+        """
+        填充序列到相同长度 - 新增方法
+        """
+        print("Handling variable-length sequences...")
+
+        def pad_single_sequence(seq, max_len, pad_val):
+            if len(seq) < max_len:
+                return seq + [pad_val] * (max_len - len(seq))
+            else:
+                return seq[:max_len]
+
+        # Analyze sequence length distribution
+        sequence_lengths = [len(seq) for seq in self.train_df['sequence']]
+        print(f"Sequence length statistics:")
+        print(f"  Average length: {np.mean(sequence_lengths):.1f}")
+        print(f"  Median: {np.median(sequence_lengths):.1f}")
+        print(f"  Maximum: {np.max(sequence_lengths)}")
+        print(f"  Minimum: {np.min(sequence_lengths)}")
+
+        # Choose appropriate sequence length (e.g., 95th percentile)
+        if max_length is None:
+            max_length = int(np.percentile(sequence_lengths, 95))
+        print(f"Selected sequence max length: {max_length} (covers 95% of samples)")
+
+        # Perform padding
+        self.train_df['padded_sequence'] = self.train_df['sequence'].apply(
+            lambda x: pad_single_sequence(x, max_length, pad_value)
+        )
+        self.test_df['padded_sequence'] = self.test_df['sequence'].apply(
+            lambda x: pad_single_sequence(x, max_length, pad_value)
+        )
+
+        # Store padded sequences as numpy arrays
+        self.X_train = np.array(self.train_df['padded_sequence'].tolist())
+        self.X_test = np.array(self.test_df['padded_sequence'].tolist())
+        self.y_train = np.array(self.train_df['label'].tolist())
+        self.y_test = np.array(self.test_df['label'].tolist())
+
+        print(f"Padded data shapes:")
+        print(f"  Training set: {self.X_train.shape}")
+        print(f"  Test set: {self.X_test.shape}")
+
+        return self.X_train, self.X_test, self.y_train, self.y_test
+
+    def split_train_val(self, test_size=0.2, random_state=42):
+        """
+        分割训练集和验证集 - 新增方法
+        """
+        from sklearn.model_selection import train_test_split
+
+        print("Splitting training set into train and validation sets...")
+
+        # Split the training data
+        self.X_train_final, self.X_val, self.y_train_final, self.y_val = train_test_split(
+            self.X_train, self.y_train,
+            test_size=test_size,
+            random_state=random_state,
+            stratify=self.y_train
+        )
+
+        print("Dataset splitting completed:")
+        print(f"  Final training set: {self.X_train_final.shape}")
+        print(f"  Validation set: {self.X_val.shape}")
+        print(f"  Test set: {self.X_test.shape}")
+
+        # Check label distribution
+        print("\nLabel distribution:")
+        print(f"  Training - Positive: {np.sum(self.y_train_final == 1)}, Negative: {np.sum(self.y_train_final == 0)}")
+        print(f"  Validation - Positive: {np.sum(self.y_val == 1)}, Negative: {np.sum(self.y_val == 0)}")
+        print(f"  Test - Positive: {np.sum(self.y_test == 1)}, Negative: {np.sum(self.y_test == 0)}")
+
+        return self.X_train_final, self.X_val, self.y_train_final, self.y_val
+
+
+
+
+
 
     def calculate_basic_statistics(self):
         """

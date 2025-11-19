@@ -207,16 +207,90 @@ def compare_embeddings():
 
     return results
 
+
+def run_advanced_analysis():
+    """运行高级数据分析"""
+    print("=== 高级数据分析 ===")
+
+    try:
+        from my_data_analysis import IMDBDataAnalyzer
+
+        # 创建分析器实例
+        analyzer = IMDBDataAnalyzer("aclImdb")
+
+        # 加载数据
+        train_df, test_df = analyzer.load_imdb_from_local()
+        if train_df is None:
+            print("数据加载失败!")
+            return
+
+        # 文本清洗
+        analyzer.apply_text_cleaning()
+
+        # 选择分词类型
+        print("\n请选择分词类型:")
+        print("1. Word-level (单词级)")
+        print("2. Character-level (字符级)")
+        print("3. Subword-level (子词级)")
+
+        choice = input("请输入选择 (1-3): ").strip()
+
+        tokenization_type = 'word'
+        tokenization_params = {}
+
+        if choice == '1':
+            tokenization_type = 'word'
+        elif choice == '2':
+            tokenization_type = 'char'
+        elif choice == '3':
+            tokenization_type = 'subword'
+            try:
+                min_n = int(input("请输入最小子词长度 (默认2): ") or 2)
+                max_n = int(input("请输入最大子词长度 (默认4): ") or 4)
+                tokenization_params = {'min_n': min_n, 'max_n': max_n}
+            except ValueError:
+                print("使用默认参数")
+                tokenization_params = {'min_n': 2, 'max_n': 4}
+
+        # 应用分词
+        analyzer.apply_tokenization(tokenization_type, **tokenization_params)
+
+        # 统计分析
+        analyzer.calculate_basic_statistics()
+
+        # 构建词汇表（仅单词级分词）
+        if tokenization_type == 'word':
+            analyzer.build_vocabulary()
+            analyzer.convert_to_sequences(256)
+            analyzer.pad_sequences()
+            analyzer.split_train_val()
+
+        # 可视化
+        analyzer.create_visualizations('data_distribution.png')
+
+        # 保存处理后的数据
+        save_choice = input("是否保存处理后的数据? (y/n): ").lower().strip()
+        if save_choice == 'y':
+            analyzer.save_processed_data()
+
+        print("\n数据分析完成!")
+
+    except Exception as e:
+        print(f"高级数据分析失败: {e}")
+        import traceback
+        traceback.print_exc()
+
 def main():
     print("选择训练模式:")
     print("1. 随机初始化嵌入")
     print("2. 预训练GloVe嵌入（不冻结）")
     print("3. 预训练GloVe嵌入（冻结）")
     print("4. 比较所有嵌入方式")
-    print("5. 运行我的数据分析")
-    print("6. 运行bert微调")
+    print("5. 运行基础数据分析")
+    print("6. 运行高级数据分析")  # 新增选项
+    print("7. 运行BERT微调")
 
-    choice = input("请输入选择 (1-6): ").strip()
+    choice = input("请输入选择 (1-7): ").strip()
 
     if choice == "1":
         result = train_model("random")
@@ -232,12 +306,8 @@ def main():
             print("GloVe冻结模型训练失败!")
     elif choice == "4":
         results = compare_embeddings()
-        # 保存比较结果
-        if any(results.values()):
-            print(f"\n所有模型训练完成! 最佳模型保存在各自的saved_models子目录中")
-        # 新增功能5
     elif choice == "5":
-        print("运行我的数据分析...")
+        print("运行基础数据分析...")
         try:
             from my_data_analysis import run_my_analysis
             stats = run_my_analysis()
@@ -246,13 +316,15 @@ def main():
                 print(f"  {key}: {value}")
         except Exception as e:
             print(f"数据分析运行失败: {e}")
-            print("请确保my_data_analysis.py文件存在")
-    elif choice == "6":
+    elif choice == "6":  # 新增高级数据分析
+        run_advanced_analysis()
+    elif choice == "7":
         result = train_bert()
         if result is None:
             print("BERT微调训练失败!")
     else:
         print("无效选择")
+
 
 if __name__ == '__main__':
     main()

@@ -409,14 +409,34 @@ def load_data():
     analyze_dataset(train_df, "训练集")
     analyze_dataset(test_df, "测试集")
 
+    # 支持不同分词类型的数据处理
+    tokenization_type = 'word'  # 默认使用单词级分词
+    tokenization_params = {}
 
-    if not os.path.exists(vocab_file):
-        vocab = build_vocab(train_df['clean_text'])
-        print(f"词汇表大小: {len(vocab)}")
-        save_vocabulary(vocab, vocab_file)
-        print(f"保存完成: {vocab_file}")
+    # 检查是否需要应用特定分词类型
+    # 这里可以扩展为从配置或参数获取分词类型
+    # 例如：tokenization_type = CONFIG.get('TOKENIZATION_TYPE', 'word')
+
+    # 如果使用单词级分词，构建标准词汇表
+    if tokenization_type == 'word':
+        if not os.path.exists(vocab_file):
+            vocab = build_vocab(train_df['clean_text'])
+            print(f"词汇表大小: {len(vocab)}")
+            save_vocabulary(vocab, vocab_file)
+            print(f"保存完成: {vocab_file}")
+        else:
+            vocab = load_vocabulary(vocab_file)
     else:
-        vocab = load_vocabulary(vocab_file)
+        # 对于非单词级分词，使用特殊处理
+        # 这里可以扩展支持字符级或子词级分词
+        print(f"使用 {tokenization_type} 分词，需要特殊词汇表处理")
+        # 暂时回退到单词级词汇表
+        if not os.path.exists(vocab_file):
+            vocab = build_vocab(train_df['clean_text'])
+            save_vocabulary(vocab, vocab_file)
+        else:
+            vocab = load_vocabulary(vocab_file)
+
 
     # 转换为序列
     max_sequence_length = 256  # 根据你的数据调整
