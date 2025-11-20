@@ -26,22 +26,33 @@ def create_bert_model(strategy='last_2_layers'):
 
     return model, strategy_config, device
 
-def train_bert():
+def train_bert(strategy="last_2_layers", learning_rate=2e-5, batch_size=16, max_length=256):
     """训练BERT微调模型"""
     print("=== BERT微调训练 ===")
+    print(f"配置: strategy={strategy}, lr={learning_rate}, batch_size={batch_size}, max_length={max_length}")
     strategy = "last_2_layers"
     # 创建模型
     model, strategy_config ,device = create_bert_model(strategy)
 
-    result = data_loader.load_bert_data()
+    result = data_loader.load_bert_data(
+        batch_size=batch_size,
+        max_length=max_length
+    )
     if result is None:
         print("数据加载失败!")
         return None
     train_loader, val_loader, test_loader = result
 
     # 创建训练器
-    trainer = BERTTrainer(model, train_loader, val_loader, device, save_dir=CONFIG['BERT_SAVE_DIR'])
-
+    trainer = BERTTrainer(
+        model, train_loader, val_loader, device,
+        save_dir=CONFIG['BERT_SAVE_DIR'],
+        epochs=CONFIG['BERT_EPOCHS'],
+        strategy=strategy,
+        learning_rate=learning_rate,
+        batch_size=batch_size,
+        max_length=max_length
+    )
     # 开始训练
     start_time = time.time()
     trainer.train()
@@ -57,5 +68,6 @@ def train_bert():
         'test_metrics': test_metrics,
         'training_time': training_time,
         'model': model,
-        'trainer': trainer
+        'trainer': trainer,
+        'experiment_config': trainer.experiment_config
     }

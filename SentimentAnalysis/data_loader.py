@@ -35,6 +35,21 @@ def clean_text(text):
     text = re.sub(r'[^a-zA-Z]', ' ', text)
     #6. remove the space not need
     text = re.sub(r'\s+', ' ', text).strip()
+    #7. 处理缩写和特殊形式
+    text = re.sub(r"what's", "what is ", text)
+    text = re.sub(r"it's", "it is ", text)
+    text = re.sub(r"that's", "that is ", text)
+    text = re.sub(r"\'s", " ", text)
+    text = re.sub(r"\'ve", " have ", text)
+    text = re.sub(r"can't", "cannot ", text)
+    text = re.sub(r"n't", " not ", text)
+    text = re.sub(r"I'm", "I am ", text)
+    text = re.sub(r"\'re", " are ", text)
+    text = re.sub(r"\'d", " would ", text)
+    text = re.sub(r"\'ll", " will ", text)
+
+    #8. 移除标点符号，但保留单词间的空格
+    text = re.sub(r'[^\w\s]', ' ', text)
 
     return text
 
@@ -80,7 +95,7 @@ def to_tensor(data):
     return torch.tensor(data, dtype=torch.long)
 
 # 3. 准备预训练词向量 (如GloVe)
-def load_glove_embeddings(glove_path, vocab, embedding_dim=100):
+def load_glove_embeddings(glove_path, vocab, embedding_dim=300):
     """加载GloVe词向量并创建嵌入矩阵"""
     embeddings_index = {}
     print(f"Loading GloVe embeddings from {glove_path}")
@@ -107,26 +122,41 @@ def load_glove_embeddings(glove_path, vocab, embedding_dim=100):
     missing_words = []
 
     for word, idx in vocab.items():
-        embedding_vector = embeddings_index.get(word)
+        embedding_vector = None
+
+        # 策略1: 直接查找
+        if word in embeddings_index:
+            embedding_vector = embeddings_index[word]
+
+        # 策略2: 小写查找
+        elif word.lower() in embeddings_index:
+            embedding_vector = embeddings_index[word.lower()]
+
+        # 策略3: 去除标点后查找
+        elif re.sub(r'[^\w\s]', '', word) in embeddings_index:
+            clean_word = re.sub(r'[^\w\s]', '', word)
+            embedding_vector = embeddings_index[clean_word]
+
+        # 策略4: 词干化后查找（简单版本）
+        elif word.rstrip('.,!?;:') in embeddings_index:
+            stemmed_word = word.rstrip('.,!?;:')
+            embedding_vector = embeddings_index[stemmed_word]
+
         if embedding_vector is not None:
-            # Find pre-train vectors
             embedding_matrix[idx] = embedding_vector
             found_words += 1
-        elif word.lower() in embeddings_index:
-            # try lower letter
-            embedding_matrix[idx] = embeddings_index[word.lower()]
-            found_words += 1
         else:
-            # 对于不在GloVe中的词，随机初始化
+            # 随机初始化未找到的词
             embedding_matrix[idx] = np.random.normal(scale=0.6, size=(embedding_dim,))
             if word not in ['<PAD>', '<UNK>']:
                 missing_words.append(word)
-    # Analysis report
+
+    # 分析报告
     coverage = found_words / len(vocab) * 100
     print(f"词汇表覆盖率: {found_words}/{len(vocab)} ({coverage:.2f}%)")
 
     if missing_words and len(missing_words) > 10:
-        print(f"前10个缺失词示例: {missing_words[:10]}")
+        print(f"前20个缺失词示例: {missing_words[:20]}")
 
     return torch.tensor(embedding_matrix, dtype=torch.float)
 

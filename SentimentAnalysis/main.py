@@ -319,7 +319,31 @@ def main():
     elif choice == "6":  # 新增高级数据分析
         run_advanced_analysis()
     elif choice == "7":
-        result = train_bert()
+        # 让用户选择BERT实验参数
+        print("\n选择BERT实验配置:")
+        print("1. 默认配置 (last_2_layers, lr=2e-5, batch=16, len=256)")
+        print("2. 全参数微调 (full_finetune, lr=2e-5, batch=16, len=256)")
+        print("3. 仅分类器 (classifier_only, lr=1e-4, batch=16, len=256)")
+        print("4. 自定义配置")
+
+        bert_choice = input("请输入选择 (1-4): ").strip()
+
+        if bert_choice == "1":
+            result = train_bert(strategy="last_2_layers", learning_rate=2e-5, batch_size=16, max_length=256)
+        elif bert_choice == "2":
+            result = train_bert(strategy="full_finetune", learning_rate=2e-5, batch_size=16, max_length=256)
+        elif bert_choice == "3":
+            result = train_bert(strategy="classifier_only", learning_rate=1e-4, batch_size=16, max_length=256)
+        elif bert_choice == "4":
+            # 自定义配置
+            strategy = input("输入微调策略 (last_2_layers/full_finetune/classifier_only): ").strip()
+            lr = float(input("输入学习率 (如2e-5): ").strip())
+            batch_size = int(input("输入批次大小 (如16): ").strip())
+            max_length = int(input("输入序列长度 (如256): ").strip())
+            result = train_bert(strategy=strategy, learning_rate=lr, batch_size=batch_size, max_length=max_length)
+        else:
+            result = train_bert()  # 使用默认
+
         if result is None:
             print("BERT微调训练失败!")
     else:

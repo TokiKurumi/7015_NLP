@@ -48,7 +48,8 @@ class BERTFineTuningStrategies:
         return strategies.get(strategy_name, strategies['last_2_layers'])
 
 class BERTTrainer:
-    def __init__(self, model, train_loader, val_loader, device, save_dir=None, epochs=3,strategy='last_2_layers'):
+    def __init__(self, model, train_loader, val_loader, device, save_dir=None, epochs=3,strategy='last_2_layers', learning_rate=2e-5,
+             batch_size=16, max_length=256):
         self.model = model
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -57,19 +58,26 @@ class BERTTrainer:
         self.epochs = epochs
         self.strategy_config = BERTFineTuningStrategies.get_strategy(strategy)
 
+        self.batch_size = batch_size
+        self.max_length = max_length
+        self.learning_rate = learning_rate
+        self.strategy_name = strategy
+
         os.makedirs(self.save_dir, exist_ok=True)
 
         # 损失函数
         self.criterion = nn.BCEWithLogitsLoss()
 
-        self.optimizer = optim.AdamW(model.parameters(), lr=2e-5, weight_decay=0.01)
+        self.optimizer = optim.AdamW(model.parameters(), lr=learning_rate, weight_decay=0.01)
 
         # 学习率调度器
         self.scheduler = optim.lr_scheduler.LinearLR(self.optimizer, start_factor=1.0, end_factor=0.5,
                                                      total_iters=epochs)
 
         print(f"使用微调策略: {strategy}")
-        print(f"学习率: {self.strategy_config['learning_rate']}")
+        print(f"学习率: {learning_rate}")
+        print(f"批次大小: {batch_size}")
+        print(f"序列长度: {max_length}")
         print(f"冻结层: {self.strategy_config['freeze_bert_layers']}")
 
         # 记录训练历史
@@ -82,6 +90,16 @@ class BERTTrainer:
         # 保存最佳模型
         self.best_val_accuracy = 0.0
         self.best_model_path = os.path.join(save_dir, 'best_bert_model.pt')
+
+        # 记录实验配置（用于后续分析）
+        self.experiment_config = {
+            'strategy': strategy,
+            'learning_rate': learning_rate,
+            'batch_size': batch_size,
+            'max_length': max_length,
+            'classifier_hidden_size': self.strategy_config['classifier_hidden_size'],
+            'dropout': self.strategy_config['dropout']
+        }
 
     def train_epoch(self, epoch, total_epochs):
         self.model.train()
@@ -229,6 +247,7 @@ class BERTTrainer:
                   f"{val_metrics['f1']:>8.3f} | {epoch_time:>8.2f} | {'√' if is_best else '×':^6}")
 
         self.plot_training_history()
+        self.save_experiment_results()
 
         avg_epoch_time = sum(self.epoch_times) / len(self.epoch_times)
         total_training_time = sum(self.epoch_times)
@@ -275,3 +294,34 @@ class BERTTrainer:
         else:
             print("BERT最佳模型文件不存在")
             return False
+
+    def save_experiment_results(self):
+        """保存实验配置和结果"""
+        import json
+        from datetime import datetime
+
+        results = {
+            'experiment_config': self.experiment_config,
+            'final_metrics': {
+                'best_val_accuracy': self.best_val_accuracy,
+                'final_train_accuracy': self.train_accuracies[-1] if self.train_accuracies else 0,
+                'final_val_accuracy': self.val_accuracies[-1] if self.val_accuracies else 0,
+                'total_training_time': sum(self.epoch_times),
+                'avg_epoch_time': sum(self.epoch_times) / len(self.epoch_times) if self.epoch_times else 0
+            },
+            'training_history': {
+                'train_losses': self.train_losses,
+                'val_losses': self.val_losses,
+                'train_accuracies': self.train_accuracies,
+                'val_accuracies': self.val_accuracies,
+                'epoch_times': self.epoch_times
+            },
+            'timestamp': datetime.now().isoformat()
+        }
+
+        # 保存到文件
+        results_file = os.path.join(self.save_dir, 'experiment_results.json')
+        with open(results_file, 'w', encoding='utf-8') as f:
+            json.dump(results, f, indent=2, ensure_ascii=False)
+
+        print(f"实验结果已保存到: {results_file}")

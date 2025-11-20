@@ -9,7 +9,7 @@ import os
 
 
 class SentimentTrainer:
-    def __init__(self, model, train_loader, val_loader, device, save_dir=None, epochs=10):
+    def __init__(self, model, train_loader, val_loader, device, save_dir=None, epochs=10, learning_rate=1e-3):
         self.model = model
         self.train_loader = train_loader
         self.val_loader = val_loader
@@ -21,7 +21,7 @@ class SentimentTrainer:
 
         # 损失函数和优化器
         self.criterion = nn.BCEWithLogitsLoss()
-        self.optimizer = optim.Adam(model.parameters())
+        self.optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
         # 记录训练历史
         self.train_losses = []
